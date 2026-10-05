@@ -427,14 +427,18 @@
           headers: { 'Content-Type': 'text/plain;charset=utf-8' },
           body: JSON.stringify({ month, items: rows })
         });
-        const json = await res.json();
-        if (json.ok) {
+        const text = await res.text();
+        let json = null;
+        try { json = JSON.parse(text); } catch (e) { /* JSON以外の応答 */ }
+        if (!json) {
+          updateSheetStatus(`✗ スクリプトの応答が想定外です（HTTP ${res.status}）。doPostを含む最新コードが新バージョンとしてデプロイされているか確認してください`);
+        } else if (json.ok) {
           updateSheetStatus(`✓ スプレッドシートに${json.added}行追記しました`);
         } else {
           updateSheetStatus('✗ 追記に失敗しました：' + (json.error || '不明なエラー'));
         }
       } catch (e) {
-        updateSheetStatus('✗ 追記結果を確認できませんでした。スプレッドシートを見て、増えていなければもう一度お試しください');
+        updateSheetStatus('✗ スクリプトに接続できませんでした（' + (e && e.message ? e.message : '通信エラー') + '）。連携URLと、デプロイのアクセス設定「全員」を確認してください');
       }
     }
 
