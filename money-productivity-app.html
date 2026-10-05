@@ -218,6 +218,45 @@
     .preview.show {
       display: block;
     }
+
+    .sheet-status {
+      margin-top: 0.75rem;
+      font-size: 12px;
+      color: #999;
+      text-align: center;
+    }
+
+    .settings-toggle {
+      display: block;
+      margin: 1rem auto 0;
+      background: none;
+      border: none;
+      color: #aaa;
+      font-size: 12px;
+      text-decoration: underline;
+      cursor: pointer;
+      flex: none;
+      padding: 4px 8px;
+    }
+
+    .settings {
+      display: none;
+      margin-top: 0.75rem;
+      padding: 1rem;
+      background: #f9f7f4;
+      border-radius: 6px;
+    }
+
+    .settings.show {
+      display: block;
+    }
+
+    .settings p {
+      font-size: 12px;
+      color: #999;
+      line-height: 1.6;
+      margin-top: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -290,8 +329,20 @@
       </div>
 
       <div class="feedback" id="feedback"></div>
+      <div class="sheet-status" id="sheetStatus"></div>
       <div class="preview" id="preview"></div>
     </form>
+
+    <button type="button" class="settings-toggle" id="settingsToggle">スプレッドシート連携の設定</button>
+    <div class="settings" id="settings">
+      <label for="sheetUrl">連携URL（Apps Scriptのウェブアプリ）</label>
+      <input type="text" id="sheetUrl" placeholder="https://script.google.com/macros/s/.../exec" />
+      <div class="button-group">
+        <button type="button" class="btn-copy" id="saveUrlBtn">保存</button>
+        <button type="button" class="btn-reset" id="clearUrlBtn">連携を解除</button>
+      </div>
+      <p>URLはこのブラウザの中だけに保存され、公開ページには含まれません。未設定の場合は、これまで通りコピーだけを行います。</p>
+    </div>
   </div>
 
   <script>
@@ -299,6 +350,93 @@
     const form = document.getElementById('appForm');
     const feedback = document.getElementById('feedback');
     const preview = document.getElementById('preview');
+    const sheetStatus = document.getElementById('sheetStatus');
+    const settings = document.getElementById('settings');
+    const sheetUrlInput = document.getElementById('sheetUrl');
+    const STORAGE_KEY = 'moneyProductivitySheetUrl';
+
+    function loadSheetUrl() {
+      try { return localStorage.getItem(STORAGE_KEY) || ''; } catch (e) { return ''; }
+    }
+    function saveSheetUrl(url) {
+      try {
+        if (url) localStorage.setItem(STORAGE_KEY, url);
+        else localStorage.removeItem(STORAGE_KEY);
+        return true;
+      } catch (e) { return false; }
+    }
+
+    // 設定用リンク（...html#sheet=URL）で開いた場合は、URLを保存してアドレスから消す
+    (function initFromHash() {
+      const m = location.hash.match(/^#sheet=(.+)$/);
+      if (!m) return;
+      const url = decodeURIComponent(m[1]);
+      if (/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(url)) {
+        saveSheetUrl(url);
+      }
+      history.replaceState(null, '', location.pathname + location.search);
+    })();
+
+    sheetUrlInput.value = loadSheetUrl();
+    updateSheetStatus();
+
+    function updateSheetStatus(msg) {
+      sheetStatus.textContent = msg || (loadSheetUrl() ? 'スプレッドシート連携：オン' : '');
+    }
+
+    document.getElementById('settingsToggle').addEventListener('click', () => {
+      settings.classList.toggle('show');
+    });
+    document.getElementById('saveUrlBtn').addEventListener('click', () => {
+      const url = sheetUrlInput.value.trim();
+      if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(url)) {
+        updateSheetStatus('URLの形式が正しくありません（…/exec で終わるURLを貼ってください）');
+        return;
+      }
+      updateSheetStatus(saveSheetUrl(url) ? 'スプレッドシート連携：オン（保存しました）' : '保存できませんでした');
+    });
+    document.getElementById('clearUrlBtn').addEventListener('click', () => {
+      saveSheetUrl('');
+      sheetUrlInput.value = '';
+      updateSheetStatus('スプレッドシート連携を解除しました');
+    });
+
+    // 入力のある買い物だけをスプレッドシートに1行ずつ追記する
+    async function sendToSheet() {
+      const url = loadSheetUrl();
+      if (!url) return;
+
+      const month = document.getElementById('month').value.trim();
+      const rows = [];
+      for (let i = 1; i <= 3; i++) {
+        const item = document.getElementById(`item${i}`).value.trim();
+        const amount = document.getElementById(`price${i}`).value.trim();
+        const reason = document.getElementById(`reason${i}`).value.trim();
+        if (item || amount || reason) rows.push({ item, amount, reason });
+      }
+      if (rows.length === 0) {
+        updateSheetStatus('入力がないため、スプレッドシートには追記しませんでした');
+        return;
+      }
+
+      updateSheetStatus('スプレッドシートに追記中…');
+      try {
+        // text/plain にして、事前確認(プリフライト)なしで送る
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({ month, items: rows })
+        });
+        const json = await res.json();
+        if (json.ok) {
+          updateSheetStatus(`✓ スプレッドシートに${json.added}行追記しました`);
+        } else {
+          updateSheetStatus('✗ 追記に失敗しました：' + (json.error || '不明なエラー'));
+        }
+      } catch (e) {
+        updateSheetStatus('✗ 追記結果を確認できませんでした。スプレッドシートを見て、増えていなければもう一度お試しください');
+      }
+    }
 
     copyBtn.addEventListener('click', () => {
       const month = document.getElementById('month').value || '対象月未記入';
@@ -348,6 +486,7 @@
         feedback.className = 'feedback show success';
         preview.textContent = text;
         preview.classList.add('show');
+        sendToSheet();
         setTimeout(() => {
           feedback.classList.remove('show');
         }, 3000);
